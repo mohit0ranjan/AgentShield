@@ -20,7 +20,7 @@ body { margin: 0; }
 button, textarea { font: inherit; }
 button { cursor: pointer; }
 button:disabled { cursor: default; opacity: .55; }
-button:focus-visible, a:focus-visible, textarea:focus-visible, summary:focus-visible {
+button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visible, summary:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 3px;
 }
@@ -170,6 +170,46 @@ p, h1, h2, h3 { margin: 0; }
 .check-list li { margin-top: 7px; padding: 7px; line-height: 1.4; background: var(--surface); border: 1px solid var(--line); border-radius: 7px; }
 .check-header { display: flex; gap: 4px; flex-wrap: wrap; align-items: center; }
 .check-category, .check-evidence { color: var(--quiet); display: block; margin-top: 3px; }
+.email-dialog {
+  width: min(620px, calc(100% - 28px));
+  max-height: calc(100dvh - 28px);
+  padding: 20px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  color: inherit;
+  box-shadow: 0 14px 60px #142a2240;
+}
+.email-dialog::backdrop { background: #142a2266; }
+.email-header { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-bottom: 16px; }
+.email-header h2 { font-size: 1.15rem; }
+#email-fields, #gmail-fields { display: grid; gap: 6px; border: 0; margin: 0; padding: 0; min-width: 0; }
+#email-fields label, #gmail-fields label { font-size: .85rem; font-weight: 650; }
+#email-fields input, #email-fields textarea, #gmail-fields input {
+  width: 100%; min-width: 0; padding: 8px 10px; margin: 0 0 6px;
+  background: #fff; color: inherit; border: 1px solid #cbd9d1; border-radius: 8px; font: inherit;
+}
+#email-fields textarea { resize: vertical; }
+.email-instructions { display: flex; align-items: flex-start; gap: 8px; }
+.email-instructions button { flex-shrink: 0; }
+#review-email { justify-self: start; }
+.gmail-settings { padding: 10px 12px; margin-bottom: 14px; border: 1px solid var(--line); border-radius: 9px; background: var(--surface); }
+.gmail-settings summary { color: var(--green); font-size: .88rem; cursor: pointer; font-weight: 650; }
+.gmail-settings[open] summary { margin-bottom: 10px; }
+.gmail-settings .email-status { margin: 0 0 10px; }
+.gmail-help { margin-bottom: 6px; font-size: .8rem; color: var(--quiet); }
+.gmail-help a { color: var(--green); }
+.gmail-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.email-preview, .email-security { margin-top: 14px; padding: 12px; border: 1px solid var(--line); border-radius: 9px; background: var(--surface); font-size: .85rem; }
+.email-preview h3, .email-security h3 { font-size: .9rem; }
+.email-preview dl { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 4px 10px; margin: 8px 0; }
+.email-preview dt { font-weight: 650; }
+.email-preview dd { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+#preview-body { white-space: pre-wrap; overflow-wrap: anywhere; border-top: 1px solid var(--line); padding-top: 8px; }
+.email-confirm { margin-top: 10px; background: var(--accent); color: #fff; border-color: var(--accent); }
+.email-confirm:not(:disabled):hover { background: var(--green); }
+.email-status { margin-top: 12px; font-size: .85rem; color: var(--quiet); }
+.email-status.error { color: var(--red); }
+.email-status:empty { display: none; }
 @media (max-width: 1100px) { .shell { grid-template-columns: 185px minmax(0, 1fr) 305px; } }
 @media (max-width: 845px) {
   .shell { grid-template-columns: minmax(0, 1fr) 288px; grid-template-rows: auto minmax(0, 1fr); }

@@ -302,7 +302,18 @@ function showActivity() {
 
 byId("chat-form").addEventListener("submit", (event) => {
   event.preventDefault();
-  submit(input.value.trim());
+  const prompt = input.value.trim();
+  if (busy || uploading || !prompt) return;
+  const email = parseEmailCommand(prompt);
+  if (email) {
+    if (chatAttachment) {
+      showError("Remove the chat attachment before composing a plain-text email.");
+      return;
+    }
+    startEmailCommand(email);
+    return;
+  }
+  submit(prompt);
 });
 
 input.addEventListener("keydown", (event) => {
@@ -351,6 +362,288 @@ for (const example of byId("prompt-examples").querySelectorAll("button[data-prom
     input.focus();
   });
 }
+
+const emailDialog = byId("email-dialog");
+const emailInstruction = byId("email-instruction");
+const emailRecipient = byId("email-recipient");
+const emailSubject = byId("email-subject");
+const emailBody = byId("email-body");
+const emailPreview = byId("email-preview");
+const emailConfirm = byId("confirm-email");
+let emailReview = null;
+let emailBusy = false;
+let deliveryPending = false;
+const gmailSettings = byId("gmail-settings");
+const gmailFields = byId("gmail-fields");
+const gmailAddress = byId("gmail-address");
+const gmailPassword = byId("gmail-password");
+const disconnectGmail = byId("disconnect-gmail");
+let gmailAvailable = true;
+
+function parseEmailCommand(prompt) {
+  const addressPattern = /[a-z0-9.!#$%&'*+/=?^_~-]+@[a-z0-9-]+(?:\.[a-z0-9-]+)+/gi;
+  const addresses = [...new Set(prompt.match(addressPattern) || [])];
+  const command = prompt.replace(addressPattern, "RECIPIENT");
+  const opening = /^(?:(?:please|pls|hey agentshield|agentshield)[,\s]+)*(?:(?:can|could|would|will) you\s+|i want you to\s+)?/i;
+  const request = command.replace(opening, "");
+  const directEmail = /^e-?mail\s+(?:to\b|RECIPIENT\b|him\b|her\b|them\b|me\b|about\b|[\p{L}]+\s+(?:about|regarding)\b)/iu;
+  const composeEmail = /^(?:send|draft|write|compose)\s+(?:(?:an?|the|one|friendship|friendly|invitation|reminder)\s+)*(?:e-?mail\b|(?:him|her|them|me|RECIPIENT)\s+(?:an?\s+)?e-?mail\b)/i;
+  const afterRecipient = /^<?RECIPIENT>?\s*[,:\-]?\s*(?:ko\s+)?(?:(?:send\s+(?:an?\s+)?)?e-?mail|mail)\b/i;
+  const hinglish = /^(?:(?:RECIPIENT|[\p{L}\p{M}]+)\s+ko\s+)?(?:ek\s+)?(?:e-?mail|mail)\s+(?:bhej(?:o| do|na)?|kar(?:o| do|na)?|likh(?:o| do|na)?)\b/iu;
+  if (![directEmail, composeEmail, afterRecipient, hinglish].some((pattern) => pattern.test(request))) {
+    return null;
+  }
+  return {
+    prompt: prompt.replace(addressPattern, "the recipient"),
+    recipient: addresses.length === 1 ? addresses[0] : "",
+    multipleRecipients: addresses.length > 1,
+  };
+}
+
+function startEmailCommand(command) {
+  if (emailBusy) return;
+  clearEmailReview();
+  showError("");
+  emailInstruction.value = command.prompt;
+  emailRecipient.value = command.recipient;
+  emailSubject.value = "";
+  emailBody.value = "";
+  openEmailDialog();
+  input.value = "";
+  doEmailAction(async () => {
+    await generateEmailDraft();
+    if (command.recipient) {
+      await reviewEmailDraft();
+    } else {
+      showEmailStatus(command.multipleRecipients
+        ? "Choose one recipient, then review the email."
+        : "Enter the recipient’s email address, then review the draft.");
+      requestAnimationFrame(() => emailRecipient.focus());
+    }
+  });
+}
+
+function showEmailStatus(message, error = false) {
+  const status = byId("email-status");
+  status.textContent = message;
+  status.classList.toggle("error", error);
+}
+
+function showEmailChecks(checks) {
+  const items = checks.map((check) => {
+    const row = element("li");
+    const title = element("div", "", "check-header");
+    const passed = check.status === "pass";
+    title.append(element("strong", check.name), pill(passed ? "Passed" : "Blocked", passed ? "allowed" : "blocked"));
+    row.append(title, element("p", check.detail, "check-evidence"));
+    return row;
+  });
+  byId("email-checks").replaceChildren(...items);
+  byId("email-security").hidden = items.length === 0;
+}
+
+function clearEmailReview() {
+  emailReview = null;
+  deliveryPending = false;
+  emailPreview.hidden = true;
+  emailConfirm.hidden = true;
+  emailConfirm.textContent = "Confirm & send";
+  showEmailChecks([]);
+  showEmailStatus("");
+}
+
+async function emailRequest(action, data) {
+  const response = await fetch("/api/email/" + action, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(data),
+  });
+  const result = await response.json();
+  if (!response.ok) {
+    showEmailChecks(result.checks || []);
+    const failure = new Error(result.error);
+    failure.rejected = true;
+    throw failure;
+  }
+  if (result.checks?.length) showEmailChecks(result.checks);
+  return result;
+}
+
+async function doEmailAction(action) {
+  if (emailBusy) return;
+  emailBusy = true;
+  byId("email-fields").disabled = true;
+  gmailFields.disabled = true;
+  emailConfirm.disabled = true;
+  byId("close-email").disabled = true;
+  try {
+    await action();
+  } catch (failure) {
+    showEmailStatus(failure.message, true);
+  } finally {
+    emailBusy = false;
+    byId("email-fields").disabled = false;
+    gmailFields.disabled = !gmailAvailable;
+    emailConfirm.disabled = false;
+    byId("close-email").disabled = false;
+  }
+}
+
+function showGmailStatus(message, error = false) {
+  const status = byId("gmail-account-status");
+  status.textContent = message;
+  status.classList.toggle("error", error);
+}
+
+function renderGmailAccount(account) {
+  gmailAvailable = account.setup_available;
+  gmailFields.disabled = emailBusy || !gmailAvailable;
+  disconnectGmail.hidden = !account.gmail;
+  if (account.gmail && !gmailAddress.matches(":focus")) gmailAddress.value = account.gmail;
+  showGmailStatus(account.gmail ? "Connected as " + account.gmail
+    : account.sender ? "Sending configured as " + account.sender
+    : gmailAvailable ? "No Gmail account connected." : "In-app Gmail setup requires Windows.");
+}
+
+async function refreshGmailAccount() {
+  try {
+    renderGmailAccount(await jsonRequest("/api/email/config"));
+  } catch {
+    showGmailStatus("Could not load the sending account.", true);
+  }
+}
+
+function openEmailDialog(showGmail = false) {
+  gmailSettings.open = showGmail;
+  emailDialog.showModal();
+  refreshGmailAccount();
+  (showGmail ? gmailAddress : emailInstruction).focus();
+}
+
+byId("open-email").addEventListener("click", () => {
+  if (!emailInstruction.value && input.value.trim()) emailInstruction.value = input.value.trim().slice(0, 2000);
+  openEmailDialog();
+});
+byId("open-gmail").addEventListener("click", () => openEmailDialog(true));
+byId("close-email").addEventListener("click", () => emailDialog.close());
+emailDialog.addEventListener("close", () => { gmailPassword.value = ""; });
+
+byId("gmail-form").addEventListener("submit", (event) => {
+  event.preventDefault();
+  doEmailAction(async () => {
+    const refreshReview = emailReview && !deliveryPending;
+    showGmailStatus("Verifying Gmail over TLS…");
+    try {
+      const account = await jsonRequest("/api/email/gmail", {
+        address: gmailAddress.value.trim(), password: gmailPassword.value,
+      });
+      gmailPassword.value = "";
+      renderGmailAccount(account);
+    } catch (failure) {
+      gmailPassword.value = "";
+      showGmailStatus(failure.message, true);
+      return;
+    }
+    if (refreshReview) await reviewEmailDraft();
+  });
+});
+
+disconnectGmail.addEventListener("click", () => doEmailAction(async () => {
+  try {
+    const account = await jsonRequest("/api/email/gmail/disconnect", { confirm: true });
+    gmailAddress.value = "";
+    renderGmailAccount(account);
+    if (!deliveryPending) clearEmailReview();
+  } catch (failure) {
+    showGmailStatus(failure.message, true);
+  }
+}));
+emailDialog.addEventListener("cancel", (event) => {
+  if (emailBusy) event.preventDefault();
+});
+for (const field of [emailRecipient, emailSubject, emailBody]) {
+  field.addEventListener("input", clearEmailReview);
+}
+
+async function generateEmailDraft() {
+  clearEmailReview();
+  showEmailStatus("Generating a draft…");
+  const draft = await emailRequest("draft", { prompt: emailInstruction.value });
+  emailSubject.value = draft.subject;
+  emailBody.value = draft.body;
+}
+
+async function reviewEmailDraft() {
+  emailReview = null;
+  emailPreview.hidden = true;
+  emailConfirm.hidden = true;
+  deliveryPending = false;
+  emailConfirm.textContent = "Confirm & send";
+  showEmailStatus("Checking the recipient and message…");
+  emailReview = await emailRequest("review", {
+    recipient: emailRecipient.value.trim(), subject: emailSubject.value, body: emailBody.value,
+  });
+  byId("preview-sender").textContent = emailReview.sender || "Sending account not configured";
+  byId("preview-recipient").textContent = emailReview.recipient;
+  byId("preview-subject").textContent = emailReview.subject;
+  byId("preview-body").textContent = emailReview.body;
+  emailPreview.hidden = false;
+  emailConfirm.hidden = !emailReview.token;
+  showEmailStatus(emailReview.token
+    ? "Check the preview, then confirm to send. This review is valid for 10 minutes."
+    : "Draft passed. Open Gmail sending account to enable delivery.");
+  requestAnimationFrame(() => emailPreview.scrollIntoView({ block: "nearest" }));
+}
+
+byId("generate-email").addEventListener("click", () => {
+  if (!emailInstruction.value.trim()) {
+    showEmailStatus("Describe the email you want to draft.", true);
+    emailInstruction.focus();
+    return;
+  }
+  doEmailAction(async () => {
+    await generateEmailDraft();
+    showEmailStatus("Check the draft and enter a recipient before reviewing.");
+    requestAnimationFrame(() => emailRecipient.focus());
+  });
+});
+
+byId("email-form").addEventListener("submit", (event) => {
+  event.preventDefault();
+  doEmailAction(reviewEmailDraft);
+});
+
+emailConfirm.addEventListener("click", () => doEmailAction(async () => {
+  if (!emailReview?.token) return;
+  const action = deliveryPending ? "status" : "send";
+  showEmailStatus(deliveryPending ? "Checking delivery status…" : "Rechecking and submitting the email…");
+  let result;
+  try {
+    result = await emailRequest(action, deliveryPending
+      ? { token: emailReview.token }
+      : { token: emailReview.token, confirm: true });
+  } catch (failure) {
+    if (failure.rejected) {
+      emailConfirm.hidden = true;
+      emailReview = null;
+      throw failure;
+    }
+    deliveryPending = true;
+    emailConfirm.textContent = "Check delivery status";
+    showEmailStatus("Connection interrupted. Check the delivery status before starting a new review.", true);
+    return;
+  }
+  const messages = {
+    sent: "Email accepted by the SMTP server.",
+    failed: "The email could not be sent. Check the sending account before reviewing again.",
+    uncertain: "Delivery could not be confirmed. Check your mail account before sending again.",
+    sending: "Delivery is still in progress. Check the status again shortly.",
+    ready: "Delivery did not start. Return to the form and review again to send.",
+  };
+  showEmailStatus(messages[result.status], ["failed", "uncertain"].includes(result.status));
+  deliveryPending = result.status === "sending";
+  emailConfirm.hidden = !deliveryPending;
+  emailConfirm.textContent = "Check delivery status";
+  if (!deliveryPending) emailReview = null;
+}));
 
 async function jsonRequest(path, data) {
   const response = await fetch(path, data === undefined ? undefined : {

@@ -56,6 +56,13 @@ def initialize():
                 location TEXT NOT NULL, text TEXT NOT NULL,
                 PRIMARY KEY(document_id, ordinal)
             );
+            CREATE TABLE IF NOT EXISTS gmail_settings (
+                id INTEGER PRIMARY KEY CHECK (id = 1), protected_config BLOB NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS email_reviews (
+                token TEXT PRIMARY KEY, expires_at REAL NOT NULL,
+                snapshot TEXT NOT NULL, status TEXT NOT NULL
+            );
             CREATE TABLE IF NOT EXISTS source_audits (
                 document_id TEXT PRIMARY KEY REFERENCES documents(id),
                 fingerprint TEXT NOT NULL, findings TEXT NOT NULL, scanned_at TEXT NOT NULL

@@ -10,6 +10,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 from gateway import MODEL, live_enabled, run_turn, screen_document
+import email_agent
 import storage
 
 
@@ -52,6 +53,8 @@ class Dashboard(BaseHTTPRequestHandler):
             body = (STATIC / name).read_bytes()
             self.send_response_headers(200, content_type, len(body))
             self.wfile.write(body)
+        elif self.path == "/api/email/config":
+            self.respond(200, email_agent.account_status())
         elif self.path == "/api/config":
             self.respond(200, {"model": MODEL, "live": live_enabled()})
         elif self.path == "/api/conversations":
@@ -70,8 +73,16 @@ class Dashboard(BaseHTTPRequestHandler):
             self.respond(404, {"error": "Unknown route."})
 
     def do_POST(self):
+        email_action = {
+            "/api/email/draft": email_agent.generate_draft,
+            "/api/email/review": email_agent.review,
+            "/api/email/send": email_agent.send,
+            "/api/email/status": email_agent.delivery_status,
+            "/api/email/gmail": email_agent.connect_gmail,
+            "/api/email/gmail/disconnect": email_agent.disconnect_gmail,
+        }.get(self.path)
         document_action = re.fullmatch(r"/api/documents/([a-f0-9]{32})/state", self.path)
-        if self.path not in ("/api/chat", "/api/documents") and not document_action:
+        if self.path not in ("/api/chat", "/api/documents") and not document_action and not email_action:
             self.respond(404, {"error": "Unknown route."})
             return
         if not self.local_request():
@@ -91,7 +102,14 @@ class Dashboard(BaseHTTPRequestHandler):
         except ValueError:
             self.respond(400, {"error": "The request body is invalid or exceeds its size limit."})
             return
-        if self.path == "/api/documents":
+        if email_action:
+            try:
+                self.respond(200, email_action(data))
+            except email_agent.EmailProblem as failure:
+                self.respond(failure.status, {
+                    "error": str(failure), "checks": failure.checks,
+                })
+        elif self.path == "/api/documents":
             self.upload(data)
         elif document_action:
             try:
@@ -139,6 +157,9 @@ class Dashboard(BaseHTTPRequestHandler):
         configured_key = os.getenv("NVIDIA_API_KEY", "").strip()
         if configured_key and configured_key in prompt:
             self.respond(400, {"error": "Remove the NVIDIA credential from the chat message."})
+            return
+        if email_agent.gmail_secret_present(prompt):
+            self.respond(400, {"error": "Remove the Gmail app password from the chat message."})
             return
         if identifier is None:
             identifier = storage.create_conversation(prompt)
